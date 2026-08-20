@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Device Diagnostics</title>
+<style>
+body{font-family:system-ui,Arial;background:#f4f6f8;margin:0;color:#17202a}
+.wrap{max-width:950px;margin:25px auto;padding:0 15px}
+.card{background:#fff;padding:22px;border-radius:16px;margin-bottom:16px;box-shadow:0 5px 20px #0001}
+button,a{display:inline-block;padding:11px 15px;border-radius:9px;border:0;text-decoration:none;cursor:pointer}
+button{background:#111827;color:#fff}.reports{width:100%;border-collapse:collapse;margin-top:15px}
+th,td{padding:11px;border-bottom:1px solid #eee;text-align:left;font-size:14px}
+.badge{font-size:12px;color:#667085}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="card">
+<h1>🔎 Deep Device Diagnostics</h1>
+<p>Collects browser/server-visible diagnostics only. No GPS, camera, microphone, Bluetooth, contacts, files, IMEI or phone-number permissions are requested.</p>
+<button onclick="run()">Collect & Save Report</button>
+<span id="status" class="badge"></span>
+</div>
+<div class="card">
+<h2>Saved Reports</h2>
+<table class="reports">
+<thead><tr><th>#</th><th>Date & Time</th><th>File</th><th>Action</th></tr></thead>
+<tbody id="list"><tr><td colspan="4">Loading...</td></tr></tbody>
+</table>
+</div>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+function localDate(iso){return new Date(iso).toLocaleString("en-IN",{dateStyle:"medium",timeStyle:"medium"});}
+
+async function loadReports(){
+  const r=await fetch("/api/reports",{cache:"no-store"});
+  const files=await r.json();
+  $("list").innerHTML=files.length?files.map((x,i)=>`
+    <tr>
+      <td>${i+1}</td>
+      <td>${localDate(x.createdAt)}</td>
+      <td>${x.filename}</td>
+      <td><a href="/report.html?file=${encodeURIComponent(x.filename)}">Open</a></td>
+    </tr>`).join(""):`<tr><td colspan="4">No reports yet.</td></tr>`;
+}
+
+function webgl(){
+  try{
+    const c=document.createElement("canvas");
+    const g=c.getContext("webgl")||c.getContext("experimental-webgl");
+    if(!g)return null;
+    const d=g.getExtension("WEBGL_debug_renderer_info");
+    return {
+      vendor:g.getParameter(g.VENDOR),
+      renderer:g.getParameter(g.RENDERER),
+      version:g.getParameter(g.VERSION),
+      unmaskedVendor:d?g.getParameter(d.UNMASKED_VENDOR_WEBGL):null,
+      unmaskedRenderer:d?g.getParameter(d.UNMASKED_RENDERER_WEBGL):null
+    };
+  }catch(e){return {error:String(e)}}
+}
+
+function canvasSignal(){
+  try{
+    const c=document.createElement("canvas"),x=c.getContext("2d");
+    c.width=500;c.height=100;x.font="17px Arial";x.fillText("Deep diagnostic 12345 नमस्ते",10,30);
+    x.font="bold 19px Times New Roman";x.fillText("Browser test",10,65);
+    return c.toDataURL();
+  }catch{return null}
+}
+
+async function run(){
+  $("status").textContent=" Collecting...";
+  const n=navigator,c=n.connection||n.mozConnection||n.webkitConnection;
+  let ua=null;
+  if(n.userAgentData){
+    try{ua=await n.userAgentData.getHighEntropyValues(["architecture","bitness","formFactors","fullVersionList","model","platform","platformVersion","uaFullVersion","wow64"])}catch{}
+  }
+  let battery=null;
+  if(n.getBattery){try{const b=await n.getBattery();battery={charging:b.charging,levelPercent:Math.round(b.level*100),chargingTime:b.chargingTime,dischargingTime:b.dischargingTime}}catch{}}
+
+  const canvas=canvasSignal();
+  const data={
+    identity:{userAgent:n.userAgent,platform:n.platform,vendor:n.vendor,userAgentData:ua},
+    display:{screenWidth:screen.width,screenHeight:screen.height,availWidth:screen.availWidth,availHeight:screen.availHeight,colorDepth:screen.colorDepth,pixelDepth:screen.pixelDepth,dpr:devicePixelRatio,viewportWidth:innerWidth,viewportHeight:innerHeight,orientation:screen.orientation?.type||null},
+    locale:{language:n.language,languages:n.languages,timezone:Intl.DateTimeFormat().resolvedOptions().timeZone,timezoneOffsetMinutes:new Date().getTimezoneOffset()},
+    hardware:{cpuCores:n.hardwareConcurrency||null,deviceMemoryGB:n.deviceMemory||null,maxTouchPoints:n.maxTouchPoints||0,touchSupport:("ontouchstart"in window)||n.maxTouchPoints>0},
+    network:c?{type:c.type||null,effectiveType:c.effectiveType||null,downlinkMbps:c.downlink??null,rttMs:c.rtt??null,saveData:c.saveData??null}:null,
+    battery,
+    graphics:{webgl:webgl()},
+    browser:{cookiesEnabled:n.cookieEnabled,online:n.onLine,doNotTrack:n.doNotTrack||null,pdfViewerEnabled:n.pdfViewerEnabled??null,webdriver:n.webdriver??null,referrer:document.referrer||null},
+    fingerprintSignals:{canvasGenerated:!!canvas,canvasLength:canvas?canvas.length:0}
+  };
+
+  const response=await fetch("/api/reports",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});
+  const saved=await response.json();
+  $("status").textContent=` Saved: ${saved.collectedAt}`;
+  await loadReports();
+}
+loadReports();
+</script>
+</body>
+</html>
